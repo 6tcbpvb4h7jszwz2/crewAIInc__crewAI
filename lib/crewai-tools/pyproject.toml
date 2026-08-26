@@ -48,7 +48,7 @@ weaviate-client = [
     "weaviate-client>=4.10.2",
 ]
 patronus = [
-    "patronus>=0.0.16",
+    "patronus>=0.1.25",
 ]
 serpapi = [
     "serpapi>=0.1.5",
