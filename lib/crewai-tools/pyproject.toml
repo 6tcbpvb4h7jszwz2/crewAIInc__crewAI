@@ -51,7 +51,7 @@ patronus = [
     "patronus>=0.0.16",
 ]
 serpapi = [
-    "serpapi>=0.1.5",
+    "serpapi>=1.1.0",
 ]
 beautifulsoup4 = [
     "beautifulsoup4>=4.12.3",
