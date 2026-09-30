@@ -4,9 +4,12 @@ on:
   push:
     branches:
       - main
+      - validation/three-workflows-20260930
     paths:
       - "uv.lock"
       - "pyproject.toml"
+      - "lib/**/pyproject.toml"
+      - ".github/workflows/build-uv-cache.yml"
   schedule:
     - cron: "0 0 */5 * *"  # Run every 5 days at midnight UTC to prevent cache expiration
   workflow_dispatch:
@@ -16,10 +19,14 @@ permissions:
 
 jobs:
   build-cache:
-    runs-on: ubuntu-latest
+    env:
+      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
+      UV_MANAGED_PYTHON: "true"
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10.20", "3.11.15", "3.12.12", "3.13.12"]
 
     steps:
       - name: Checkout repository
@@ -28,21 +35,48 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
-          version: "0.11.3"
+          version: "0.11.19"
           python-version: ${{ matrix.python-version }}
           enable-cache: false
 
       - name: Install dependencies and populate cache
         run: |
           echo "Building global UV cache for Python ${{ matrix.python-version }}..."
-          uv sync --all-groups --all-extras --no-install-project
+          uv --version
+          sha256sum uv.lock
+          uv lock --check
+          uv sync --locked --all-groups --all-extras --no-install-project
+          .venv/bin/python --version
+          uv pip list --python .venv/bin/python --format json > installed-packages.json
+          .venv/bin/python - <<'PYTHON'
+          import importlib.metadata
+          import json
+          from pathlib import Path
+
+          packages = ["crewai", "crewai-tools", "crewai-files", "crewai-core", "crewai-cli", "crewai-devtools"]
+          generators = {}
+          for name in packages:
+              wheel = importlib.metadata.distribution(name).read_text("WHEEL") or ""
+              generators[name] = next((line for line in wheel.splitlines() if line.startswith("Generator:")), "")
+          Path("build-backends.json").write_text(json.dumps(generators, indent=2))
+          if any(generator != "Generator: hatchling 1.31.0" for generator in generators.values()):
+              raise SystemExit("Workspace build backend differs from the pinned Hatchling version")
+          PYTHON
+          git diff --exit-code -- uv.lock
           echo "Cache populated successfully"
+
+      - name: Upload installed package inventory
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installed-packages-py${{ matrix.python-version }}
+          path: |
+            installed-packages.json
+            build-backends.json
+          if-no-files-found: error
 
       - name: Save uv caches
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: |
-            ~/.cache/uv
-            ~/.local/share/uv
-            .venv
-          key: uv-main-py${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
+          path: ${{ env.UV_CACHE_DIR }}
+          key: uv-downloads-${{ runner.os }}-${{ runner.arch }}-0.11.19-py${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
